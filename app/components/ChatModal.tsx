@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { Tenant } from '../page'
+import PhoneInput from './PhoneInput'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -17,34 +18,41 @@ interface Props {
 type Step = 'phone' | 'chat'
 
 export default function ChatModal({ tenant, onClose }: Props) {
-  const [step, setStep]             = useState<Step>('phone')
-  const [phone, setPhone]           = useState('')
+  const [step, setStep]           = useState<Step>('phone')
+  const [phone, setPhone]         = useState('')
   const [phoneError, setPhoneError] = useState('')
-  const [messages, setMessages]     = useState<Message[]>([])
-  const [input, setInput]           = useState('')
-  const [sending, setSending]       = useState(false)
-  const [sessionId, setSessionId]   = useState<string | null>(null)
-  const bottomRef                   = useRef<HTMLDivElement>(null)
-  const inputRef                    = useRef<HTMLInputElement>(null)
+  const [messages, setMessages]   = useState<Message[]>([])
+  const [input, setInput]         = useState('')
+  const [sending, setSending]     = useState(false)
+  const bottomRef                 = useRef<HTMLDivElement>(null)
+  const inputRef                  = useRef<HTMLInputElement>(null)
 
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
-  useEffect(() => {
-    if (step === 'chat') inputRef.current?.focus()
-  }, [step])
+  // Auto-focus input whenever step changes to chat or after sending
+  const focusInput = useCallback(() => {
+    // Small delay ensures DOM is ready
+    setTimeout(() => inputRef.current?.focus(), 50)
+  }, [])
 
-  function validatePhone(v: string) {
-    const clean = v.replace(/\s/g, '')
-    if (!clean) return 'Phone number is required'
-    if (!/^\+?[\d\-\(\)]{7,15}$/.test(clean)) return 'Enter a valid phone number'
-    return ''
-  }
+  useEffect(() => {
+    if (step === 'chat') focusInput()
+  }, [step, focusInput])
+
+  // Re-focus after sending completes
+  useEffect(() => {
+    if (!sending && step === 'chat') focusInput()
+  }, [sending, step, focusInput])
 
   function handleStartChat() {
-    const err = validatePhone(phone)
-    if (err) { setPhoneError(err); return }
+    const digits = phone.replace(/\D/g, '')
+    if (digits.length < 7) {
+      setPhoneError('Please enter a valid phone number.')
+      return
+    }
     setPhoneError('')
     setStep('chat')
   }
@@ -64,12 +72,11 @@ export default function ChatModal({ tenant, onClose }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to_number:   tenant.phone_number,
-          from_number: phone.trim(),
+          from_number: phone,
           message:     content,
         }),
       })
       const data = await res.json()
-      if (data.session_id) setSessionId(data.session_id)
       const reply = data.reply || data.error || 'No response'
       setMessages(prev => [...prev, { role: 'assistant', content: reply, ts: Date.now() }])
     } catch {
@@ -80,6 +87,7 @@ export default function ChatModal({ tenant, onClose }: Props) {
       }])
     } finally {
       setSending(false)
+      // Focus is restored via the useEffect watching `sending`
     }
   }
 
@@ -92,15 +100,28 @@ export default function ChatModal({ tenant, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay" onClick={onClose}>
+    // Full-screen on mobile, centered modal on desktop
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 modal-overlay"
+      onClick={onClose}
+    >
       <div
-        className="bg-panel border border-border rounded-2xl w-full max-w-lg flex flex-col overflow-hidden shadow-2xl animate-fade-up"
-        style={{ height: step === 'chat' ? '85vh' : 'auto', maxHeight: '85vh' }}
+        className={`
+          bg-panel border border-border w-full flex flex-col overflow-hidden shadow-2xl
+          rounded-t-2xl sm:rounded-2xl
+          ${step === 'chat'
+            ? 'h-[92dvh] sm:h-[85vh] sm:max-w-lg'
+            : 'sm:max-w-lg'}
+          animate-fade-up
+        `}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border bg-card shrink-0">
-          <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-base" style={{ fontFamily: 'var(--font-display)' }}>
+          <div
+            className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-base shrink-0"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
             {tenant.brand_name[0]}
           </div>
           <div className="flex-1 min-w-0">
@@ -111,25 +132,22 @@ export default function ChatModal({ tenant, onClose }: Props) {
               <p className="text-dim text-xs truncate">{phone}</p>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="text-dim hover:text-text transition-colors p-1"
-          >
+          <button onClick={onClose} className="text-dim hover:text-text transition-colors p-1 shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
 
-        {/* Phone step */}
+        {/* ── PHONE STEP ── */}
         {step === 'phone' && (
-          <div className="p-8 flex flex-col gap-6">
+          <div className="p-6 sm:p-8 flex flex-col gap-6">
             <div>
               <h3 className="text-text font-bold text-xl mb-1" style={{ fontFamily: 'var(--font-display)' }}>
                 Start a conversation
               </h3>
               <p className="text-dim text-sm">
-                Enter the customer's phone number to simulate a chat session with{' '}
+                Enter the customer's phone number to simulate a chat with{' '}
                 <strong className="text-text">{tenant.brand_name}</strong>'s AI assistant.
               </p>
             </div>
@@ -138,18 +156,11 @@ export default function ChatModal({ tenant, onClose }: Props) {
               <label className="block text-dim text-xs font-medium mb-2 uppercase tracking-widest">
                 Customer phone number
               </label>
-              <input
-                type="tel"
+              <PhoneInput
                 value={phone}
-                onChange={e => { setPhone(e.target.value); setPhoneError('') }}
-                onKeyDown={e => e.key === 'Enter' && handleStartChat()}
-                placeholder="+1 416 555 0100"
+                onChange={setPhone}
+                placeholder="Phone number"
                 autoFocus
-                className={`w-full bg-card border rounded-xl px-4 py-3 text-text text-base placeholder:text-muted focus:outline-none focus:ring-2 transition-all ${
-                  phoneError
-                    ? 'border-red focus:ring-red/30'
-                    : 'border-border focus:ring-accent/30 focus:border-accent'
-                }`}
               />
               {phoneError && (
                 <p className="text-red text-xs mt-2">{phoneError}</p>
@@ -165,7 +176,7 @@ export default function ChatModal({ tenant, onClose }: Props) {
           </div>
         )}
 
-        {/* Chat step */}
+        {/* ── CHAT STEP ── */}
         {step === 'chat' && (
           <>
             {/* Messages */}
@@ -187,11 +198,14 @@ export default function ChatModal({ tenant, onClose }: Props) {
                   className={`flex bubble-in ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   {msg.role === 'assistant' && (
-                    <div className="w-7 h-7 rounded-full bg-accent/20 text-accent text-xs font-bold flex items-center justify-center mr-2 mt-auto shrink-0" style={{ fontFamily: 'var(--font-display)' }}>
+                    <div
+                      className="w-7 h-7 rounded-full bg-accent/20 text-accent text-xs font-bold flex items-center justify-center mr-2 mt-auto shrink-0"
+                      style={{ fontFamily: 'var(--font-display)' }}
+                    >
                       {tenant.brand_name[0]}
                     </div>
                   )}
-                  <div className={`max-w-[72%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
+                  <div className={`max-w-[75%] flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                     <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                       msg.role === 'user'
                         ? 'bg-accent text-white rounded-br-sm'
@@ -220,9 +234,9 @@ export default function ChatModal({ tenant, onClose }: Props) {
               <div ref={bottomRef} />
             </div>
 
-            {/* Input */}
-            <div className="px-4 py-3 border-t border-border bg-card shrink-0">
-              <div className="flex gap-2 items-end">
+            {/* Input bar — stays above keyboard on mobile */}
+            <div className="px-4 py-3 border-t border-border bg-card shrink-0 safe-area-bottom">
+              <div className="flex gap-2 items-center">
                 <input
                   ref={inputRef}
                   type="text"
@@ -231,7 +245,9 @@ export default function ChatModal({ tenant, onClose }: Props) {
                   onKeyDown={handleKey}
                   placeholder="Type a message…"
                   disabled={sending}
-                  className="flex-1 bg-panel border border-border rounded-xl px-4 py-2.5 text-text text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all disabled:opacity-50"
+                  // Prevent zoom on iOS (font-size >= 16px)
+                  style={{ fontSize: '16px' }}
+                  className="flex-1 bg-panel border border-border rounded-xl px-4 py-2.5 text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all disabled:opacity-50"
                 />
                 <button
                   onClick={() => sendMessage()}
