@@ -12,6 +12,14 @@ const PUBLIC_PATHS = [
   '/api/onboarding',
 ]
 
+const ADMIN_PATHS = [
+  '/users',
+  '/tenants/new',
+  '/tenants/',
+  '/api/users',
+  '/api/ai',
+]
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
@@ -37,8 +45,8 @@ export async function middleware(req: NextRequest) {
     return response
   }
 
-  // Protect /users — admin only
-  if (pathname.startsWith('/users') && payload.role !== 'admin') {
+  const isAdminPath = ADMIN_PATHS.some(p => pathname.startsWith(p))
+  if (isAdminPath && payload.role !== 'admin') {
     return NextResponse.redirect(new URL('/', req.url))
   }
 
