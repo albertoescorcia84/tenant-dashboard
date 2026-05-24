@@ -24,6 +24,10 @@ export default function ChatModal({ tenant, onClose }: Props) {
   const [messages, setMessages]   = useState<Message[]>([])
   const [input, setInput]         = useState('')
   const [sending, setSending]     = useState(false)
+  // ── NEW (v4.13): keep the backend session id between messages ──
+  // null means "no active session yet" — the backend will create one
+  // on the first /chat call and return its id in `data.session_id`.
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const bottomRef                 = useRef<HTMLDivElement>(null)
   const inputRef                  = useRef<HTMLInputElement>(null)
 
@@ -54,6 +58,9 @@ export default function ChatModal({ tenant, onClose }: Props) {
       return
     }
     setPhoneError('')
+    // Fresh start: clear any previous session_id and messages
+    setSessionId(null)
+    setMessages([])
     setStep('chat')
   }
 
@@ -74,9 +81,26 @@ export default function ChatModal({ tenant, onClose }: Props) {
           to_number:   tenant.phone_number,
           from_number: phone,
           message:     content,
+          // Only include session_id if we already have one (otherwise the
+          // backend will allocate a fresh session on this first call).
+          ...(sessionId && { session_id: sessionId }),
         }),
       })
       const data = await res.json()
+
+      // Persist the session_id returned by the backend so subsequent
+      // messages continue the same conversation (cart, customer data, etc.).
+      if (data.session_id) {
+        setSessionId(data.session_id)
+      }
+
+      // When the order is completed, give the user a few seconds to see the
+      // confirmation and then clear the session_id so the NEXT message starts
+      // a brand-new order on a clean session.
+      if (data.status === 'completed') {
+        setTimeout(() => setSessionId(null), 8000)
+      }
+
       const reply = data.reply || data.error || 'No response'
       setMessages(prev => [...prev, { role: 'assistant', content: reply, ts: Date.now() }])
     } catch {
